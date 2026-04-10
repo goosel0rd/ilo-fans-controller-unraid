@@ -2,11 +2,7 @@
 <?php
 /**
  * Fan Control Daemon
- * 
- * Automatically adjusts fan speeds based on temperatures and the active profile.
- * Run: php fan-daemon.php
- * 
- * To run in background: nohup php fan-daemon.php > /dev/null 2>&1 &
+ * Uses CPU temps from iLO + real drive temps from Unraid GraphQL API
  */
 
 require 'config.inc.php';
@@ -14,7 +10,6 @@ require 'config.inc.php';
 define('CONFIG_FILE', __DIR__ . '/auto-control.json');
 define('PID_FILE', __DIR__ . '/fan-daemon.pid');
 
-// Check if already running
 if (file_exists(PID_FILE)) {
     $pid = (int) file_get_contents(PID_FILE);
     if (posix_kill($pid, 0)) {
@@ -23,17 +18,14 @@ if (file_exists(PID_FILE)) {
     }
 }
 
-// Write PID file
 file_put_contents(PID_FILE, getmypid());
 
-// Cleanup on exit
 register_shutdown_function(function () {
     if (file_exists(PID_FILE)) {
         unlink(PID_FILE);
     }
 });
 
-// Handle signals
 pcntl_signal(SIGTERM, function () {
     echo "Received SIGTERM, shutting down...\n";
     exit(0);
@@ -51,7 +43,7 @@ function get_config()
     return json_decode(file_get_contents(CONFIG_FILE), true);
 }
 
-function get_temperatures()
+function get_ilo_temperatures()
 {
     global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD;
 
@@ -81,11 +73,9 @@ function get_temperatures()
             $status = $temp['Status']['State'] ?? 'Unknown';
 
             if ($reading !== null && $status === 'Enabled') {
-                // CPU temperatures for fan control
                 if (strpos($name, 'cpu') !== false) {
                     $cpuTemps[] = $reading;
                 }
-                // Ambient/Inlet temperature for safety override
                 if (strpos($name, 'inlet') !== false || strpos($name, 'ambient') !== false) {
                     $ambientTemp = $reading;
                 }
@@ -93,7 +83,6 @@ function get_temperatures()
         }
     }
 
-    // Count active fans
     if (isset($data['Fans'])) {
         foreach ($data['Fans'] as $fan) {
             $status = $fan['Status']['State'] ?? 'Unknown';
@@ -106,19 +95,67 @@ function get_temperatures()
     return ['cpu' => $cpuTemps, 'ambient' => $ambientTemp, 'fanCount' => $fanCount];
 }
 
+function get_unraid_disk_temperatures()
+{
+    $unraidHost = getenv('UNRAID_HOST') ?: '192.168.1.75';
+    $apiKey     = getenv('UNRAID_API_KEY') ?: '';
+
+    if (empty($apiKey)) {
+        echo "  [WARN] UNRAID_API_KEY not set, skipping disk temps\n";
+        return [];
+    }
+
+    $query = '{"query": "{ array { disks { name temp status } caches { name temp status } } }"}';
+
+    $curl = curl_init("https://$unraidHost/graphql");
+    curl_setopt($curl, CURLOPT_POST, true);
+    curl_setopt($curl, CURLOPT_POSTFIELDS, $query);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        "x-api-key: $apiKey"
+    ]);
+    curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, 0);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($curl, CURLOPT_TIMEOUT, 10);
+
+    $response = curl_exec($curl);
+    curl_close($curl);
+
+    if (!$response) {
+        echo "  [WARN] Could not reach Unraid GraphQL API\n";
+        return [];
+    }
+
+    $data = json_decode($response, true);
+    $temps = [];
+
+    $devices = array_merge(
+        $data['data']['array']['disks'] ?? [],
+        $data['data']['array']['caches'] ?? []
+    );
+
+    foreach ($devices as $device) {
+        if (isset($device['temp']) && $device['temp'] !== null) {
+            $temps[$device['name']] = $device['temp'];
+        }
+    }
+
+    return $temps;
+}
+
 function calculate_fan_speed($temps, $profile)
 {
     if (empty($temps)) {
-        return $profile['maxSpeed']; // Safety: max speed if no data
+        return $profile['maxSpeed'];
     }
 
-    $maxTemp = max($temps);
-    $targetTemp = $profile['targetTemp'];
+    $maxTemp     = max($temps);
+    $targetTemp  = $profile['targetTemp'];
     $criticalTemp = $profile['maxTemp'];
-    $minSpeed = $profile['minSpeed'];
-    $maxSpeed = $profile['maxSpeed'];
+    $minSpeed    = $profile['minSpeed'];
+    $maxSpeed    = $profile['maxSpeed'];
 
-    // Linear interpolation
     if ($maxTemp <= $targetTemp) {
         return $minSpeed;
     } elseif ($maxTemp >= $criticalTemp) {
@@ -142,19 +179,14 @@ function set_fan_speed($speed, $fanCount)
             return false;
         }
 
-        // Loop only on detected fans count
         for ($i = 0; $i < $fanCount; $i++) {
-            // Combined command to save time
             $stream = ssh2_exec($ssh, "fan p $i max $pwm; fan p $i min 255");
-
             if ($stream) {
                 stream_set_blocking($stream, true);
                 stream_set_timeout($stream, 2);
-                // Clear the buffer
                 @stream_get_contents($stream);
                 fclose($stream);
             }
-            // Small pause to let iLO breathe between fans
             usleep(50000);
         }
 
@@ -165,8 +197,7 @@ function set_fan_speed($speed, $fanCount)
     }
 }
 
-// Main loop
-echo "=== Fan Control Daemon Started ===\n";
+echo "=== Fan Control Daemon Started (CPU + Unraid Disk Temps) ===\n";
 echo "PID: " . getmypid() . "\n";
 echo "Config file: " . CONFIG_FILE . "\n\n";
 
@@ -185,7 +216,7 @@ while (true) {
 
     if (!$config['enabled']) {
         if ($lastSpeed !== null) {
-            echo "[INFO] Auto-control disabled, switching to idle\n";
+            echo "[INFO] Auto-control disabled\n";
             $lastSpeed = null;
         }
         sleep($config['checkInterval'] ?? 30);
@@ -195,17 +226,20 @@ while (true) {
     $profileName = $config['profile'] ?? 'normal';
     $profile = $config['profiles'][$profileName] ?? $config['profiles']['normal'];
 
-    // Get temperatures
-    $tempData = get_temperatures();
-    if ($tempData === null) {
-        echo "[WARN] Could not fetch temperatures\n";
+    // Get iLO temps (CPU + ambient + fan count)
+    $iloData = get_ilo_temperatures();
+    if ($iloData === null) {
+        echo "[WARN] Could not fetch iLO temperatures\n";
         sleep($config['checkInterval'] ?? 30);
         continue;
     }
 
-    $cpuTemps = $tempData['cpu'];
-    $ambientTemp = $tempData['ambient'];
-    $fanCount = $tempData['fanCount'] ?: 8; // Default to 8 if not detected
+    $cpuTemps    = $iloData['cpu'];
+    $ambientTemp = $iloData['ambient'];
+    $fanCount    = $iloData['fanCount'] ?: 8;
+
+    // Get Unraid disk temps
+    $diskTemps = get_unraid_disk_temperatures();
 
     // Safety: Force Normal profile if ambient > 40°C
     if ($ambientTemp !== null && $ambientTemp > 40 && $profileName === 'silence') {
@@ -214,20 +248,26 @@ while (true) {
         $profileName = 'normal (forced)';
     } else {
         echo "[" . date('H:i:s') . "] Profile: {$profile['label']}";
-        if ($ambientTemp !== null) {
-            echo " | Ambient: {$ambientTemp}°C";
-        }
+        if ($ambientTemp !== null) echo " | Ambient: {$ambientTemp}°C";
         echo " | Fans: {$fanCount}\n";
     }
 
-    $maxTemp = !empty($cpuTemps) ? max($cpuTemps) : 0;
-    echo "  Max CPU temp: {$maxTemp}°C\n";
+    $maxCpu  = !empty($cpuTemps) ? max($cpuTemps) : 0;
+    $maxDisk = !empty($diskTemps) ? max($diskTemps) : 0;
 
-    // Calculate speed
-    $speed = calculate_fan_speed($cpuTemps, $profile);
+    echo "  CPU: {$maxCpu}°C";
+    if (!empty($diskTemps)) {
+        $diskSummary = implode(', ', array_map(fn($n, $t) => "$n:{$t}°C", array_keys($diskTemps), $diskTemps));
+        echo " | Disks: $diskSummary";
+    }
+    echo "\n";
+
+    // Combine all temps for fan speed calculation
+    $allTemps = array_merge($cpuTemps, array_values($diskTemps));
+
+    $speed = calculate_fan_speed($allTemps, $profile);
     echo "  Calculated speed: {$speed}%\n";
 
-    // Hysteresis: only apply if change is > 3%
     $speedDiff = abs($speed - ($lastSpeed ?? 0));
     if ($lastSpeed === null || $speedDiff > 3) {
         echo "  Applying new fan speed (diff: {$speedDiff}%)...\n";

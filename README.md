@@ -188,7 +188,7 @@ The daemon uses profiles to determine fan speeds based on CPU temperatures:
 
 ## ⚠️ Requirements
 
-This tool requires a **patched iLO firmware** that exposes fan control commands via SSH. 
+This tool requires a **patched iLO firmware** that exposes fan control commands via SSH.
 
 - ✅ Supported: **Gen8 & Gen9 servers with iLO 4**
 - 🚫 Not supported: Gen10/11/12 with iLO 5/6/7
@@ -200,7 +200,6 @@ More info: [Reddit post about iLO 4 patching](https://www.reddit.com/r/homelab/c
 ## 🙏 Credits
 
 - Original project by [alex3025](https://github.com/alex3025/ilo-fans-controller)
-- Fork maintained by [Jobertomeu](https://github.com/jobertomeu)
 
 ---
 

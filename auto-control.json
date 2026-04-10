@@ -11,9 +11,9 @@
         },
         "normal": {
             "label": "Normal",
-            "minSpeed": 20,
+            "minSpeed": 15,
             "maxSpeed": 70,
-            "targetTemp": 50,
+            "targetTemp": 40,
             "maxTemp": 65
         },
         "turbo": {

@@ -60,7 +60,7 @@ function get_fans()
 
 function get_temp_zone($name) {
 	$lowerName = strtolower($name);
-	
+
 	// Define zones and their patterns
 	$zones = [
 		'ambient' => ['inlet', 'exhaust', 'ambient'],
@@ -123,9 +123,9 @@ function get_temperatures()
 				$status = $temp['Status']['State'] ?? 'Unknown';
 				$critical = $temp['UpperThresholdCritical'] ?? null;
 
-					if ($reading !== null && $status === 'Enabled') {
+				if ($reading !== null && $status === 'Enabled') {
 					$zone = get_temp_zone($name);
-					
+
 					if (!isset($grouped[$zone])) {
 						$zoneInfo = get_zone_info($zone);
 						$grouped[$zone] = [
@@ -140,13 +140,13 @@ function get_temperatures()
 							'maxCritical' => 0,
 						];
 					}
-					
+
 					$grouped[$zone]['sensors'][] = [
 						'name' => $name,
 						'reading' => $reading,
 						'critical' => $critical
 					];
-					
+
 					$grouped[$zone]['min'] = min($grouped[$zone]['min'], $reading);
 					$grouped[$zone]['max'] = max($grouped[$zone]['max'], $reading);
 					if ($critical) {
@@ -154,18 +154,82 @@ function get_temperatures()
 					}
 				}
 			}
-			
-			// Calculer les moyennes
-			foreach ($grouped as $zone => &$group) {
-				$sum = array_sum(array_column($group['sensors'], 'reading'));
-				$group['avg'] = round($sum / count($group['sensors']), 1);
-				$group['count'] = count($group['sensors']);
-				if ($group['min'] === PHP_INT_MAX) $group['min'] = 0;
+		}
+	}
+
+	// === Unraid Disk Temps ===
+	$unraidHost = getenv('UNRAID_HOST') ?: '192.168.1.75';
+	$apiKey     = getenv('UNRAID_API_KEY') ?: '';
+
+	if (!empty($apiKey)) {
+		$query = '{"query": "{ array { disks { name temp status } caches { name temp status } } }"}';
+
+		$curl = curl_init("https://$unraidHost/graphql");
+		curl_setopt($curl, CURLOPT_POST, true);
+		curl_setopt($curl, CURLOPT_POSTFIELDS, $query);
+		curl_setopt($curl, CURLOPT_HTTPHEADER, [
+			'Content-Type: application/json',
+			"x-api-key: $apiKey"
+		]);
+		curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, 0);
+		curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, 0);
+		curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
+		curl_setopt($curl, CURLOPT_TIMEOUT, 10);
+
+		$response = curl_exec($curl);
+		curl_close($curl);
+
+		if ($response) {
+			$unraidData = json_decode($response, true);
+			$devices = array_merge(
+				$unraidData['data']['array']['disks'] ?? [],
+				$unraidData['data']['array']['caches'] ?? []
+			);
+
+			// Ensure storage zone exists
+			if (!isset($grouped['storage'])) {
+				$zoneInfo = get_zone_info('storage');
+				$grouped['storage'] = [
+					'zone'        => 'storage',
+					'icon'        => $zoneInfo['icon'],
+					'label'       => $zoneInfo['label'],
+					'color'       => $zoneInfo['color'],
+					'sensors'     => [],
+					'avg'         => 0,
+					'min'         => PHP_INT_MAX,
+					'max'         => 0,
+					'maxCritical' => 55, // reasonable critical for drives
+				];
+			}
+
+			foreach ($devices as $device) {
+				if ($device['temp'] === null) continue;
+
+				$label = strtoupper($device['name']); // e.g. "DISK1", "CACHE"
+				$temp  = $device['temp'];
+
+				$grouped['storage']['sensors'][] = [
+					'name'     => $label . ' (Unraid)',
+					'reading'  => $temp,
+					'critical' => 55
+				];
+
+				$grouped['storage']['min'] = min($grouped['storage']['min'], $temp);
+				$grouped['storage']['max'] = max($grouped['storage']['max'], $temp);
 			}
 		}
 	}
 
-	// Trier par ordre logique
+	// Recalculate averages after adding Unraid disks
+	foreach ($grouped as $zone => &$group) {
+		$sum = array_sum(array_column($group['sensors'], 'reading'));
+		$count = count($group['sensors']);
+		$group['avg'] = $count > 0 ? round($sum / $count, 1) : 0;
+		$group['count'] = $count;
+		if ($group['min'] === PHP_INT_MAX) $group['min'] = 0;
+	}
+
+	// Sort by logical order
 	$order = ['ambient', 'cpu', 'memory', 'vr', 'storage', 'power', 'chipset', 'pci', 'other'];
 	$sorted = [];
 	foreach ($order as $zone) {
@@ -193,7 +257,7 @@ function get_auto_control() {
 		];
 	}
 	$config = json_decode(file_get_contents($configFile), true);
-	
+
 	// Check if daemon is running
 	$pidFile = __DIR__ . '/fan-daemon.pid';
 	$config['daemonRunning'] = false;
@@ -203,7 +267,7 @@ function get_auto_control() {
 			$config['daemonRunning'] = true;
 		}
 	}
-	
+
 	return $config;
 }
 
@@ -364,7 +428,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				@apply z-10 py-0.5 px-2 rounded-md select-none absolute max-h-max min-w-max bg-gray-50 border-gray-150 text-gray-800
 							 shadow-md border dark:border-gray-800 dark:bg-gray-850 dark:text-gray-200;
 			}
-			
+
 			/* https://tailwindcss.com/docs/dark-mode#toggling-dark-mode-manually */
 			@custom-variant dark (&:where(.dark, .dark *));
 
@@ -521,7 +585,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						Start daemon
 					</span>
 				</div>
-				
+
 				<!-- Toggle -->
 				<div class="flex items-center space-x-2">
 					<span class="text-xs font-medium" :class="$store.autoControl.config.enabled ? 'dark:text-gray-500 text-gray-400' : 'dark:text-gray-300 text-gray-700'">Manual</span>
@@ -540,8 +604,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				<div class="flex flex-wrap gap-2 mt-2">
 					<template x-for="(profile, key) in $store.autoControl.config.profiles" :key="key">
 						<button class="px-3 py-1.5 rounded-md text-sm font-medium transition-all"
-							:class="$store.autoControl.config.profile === key 
-								? 'bg-emerald-500 text-white' 
+							:class="$store.autoControl.config.profile === key
+								? 'bg-emerald-500 text-white'
 								: 'dark:bg-gray-800 bg-gray-100 dark:text-gray-300 text-gray-700 dark:hover:bg-gray-750 hover:bg-gray-200'"
 							@click="$store.autoControl.setProfile(key)"
 							x-text="profile.label">
@@ -617,7 +681,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				</div>
 				<div class="flex items-center space-x-2">
 					<!-- Auto-refresh selector -->
-					<select 
+					<select
 						class="input text-xs px-1.5 py-0.5 rounded cursor-pointer"
 						@change="$store.temperatures.setAutoRefresh(parseInt($event.target.value))"
 						:value="$store.temperatures.autoRefreshInterval">
@@ -658,14 +722,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 										x-text="group.avg + '°C'"></span>
 									<span class="text-xs dark:text-gray-600 text-gray-500 ml-1" x-text="'(' + group.min + '-' + group.max + ')'"></span>
 								</div>
-								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" 
+								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
 									class="w-4 h-4 dark:text-gray-600 text-gray-400 transition-transform duration-200"
 									:class="open ? 'rotate-180' : ''">
 									<path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
 								</svg>
 							</div>
 						</div>
-						
+
 						<!-- Progress bar -->
 						<div class="h-1 dark:bg-gray-800 bg-gray-200">
 							<div class="h-full transition-all duration-300"
@@ -877,12 +941,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				setAutoRefresh(seconds) {
 					this.autoRefreshInterval = seconds;
 					localStorage.setItem('tempRefreshInterval', seconds);
-					
+
 					if (this.intervalId) {
 						clearInterval(this.intervalId);
 						this.intervalId = null;
 					}
-					
+
 					if (seconds > 0) {
 						this.intervalId = setInterval(() => this.refresh(), seconds * 1000);
 					}

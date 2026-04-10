@@ -10,6 +10,9 @@
 $ILO_HOST = 'your-ilo-ip';  // Ex. 192.168.1.69
 $ILO_USERNAME = 'your-ilo-username';  // Ex. Administrator
 $ILO_PASSWORD = 'your-ilo-password';  // Ex. AdministratorPassword1234
+$UNRAID_HOST='your-ip';
+$UNRAID_API_KEY='your-readonly-api';
+
 
 /*
   MISCELLANEOUS SETTINGS

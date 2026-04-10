@@ -35,6 +35,8 @@ COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 ENV ILO_HOST=""
 ENV ILO_USERNAME=""
 ENV ILO_PASSWORD=""
+ENV UNRAID_HOST=""
+ENV UNRAID_API_KEY=""
 ENV MINIMUM_FAN_SPEED=10
 ENV AUTO_DAEMON=true
 
