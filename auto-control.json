@@ -1,6 +1,6 @@
 {
     "enabled": true,
-    "profile": "silent",
+    "profile": "Normal",
     "profiles": {
         "silent": {
             "label": "Silent",

@@ -120,7 +120,6 @@ function get_unraid_disk_temperatures()
     curl_setopt($curl, CURLOPT_TIMEOUT, 10);
 
     $response = curl_exec($curl);
-    curl_close($curl);
 
     if (!$response) {
         echo "  [WARN] Could not reach Unraid GraphQL API\n";
