@@ -43,13 +43,18 @@
 
 ### Docker Run
 ```bash
-docker run -d --name ilo-fans-controller --restart always \
-    -p 8080:80 \
-    -e ILO_HOST='your-ilo-ip' \
-    -e ILO_USERNAME='Administrator' \
-    -e ILO_PASSWORD='your-password' \
-    -e AUTO_DAEMON='true' \
-    harbor.ics.fr/ics/ilo-fans-controller:latest
+docker run -d \
+  --name='ilofancontrol' \
+  --net='bridge' \
+  --pids-limit 2048 \
+  -e ILO_HOST='your-ilo-ip' \
+  -e ILO_USERNAME='Administrator' \
+  -e ILO_PASSWORD='your-Password' \
+  -e AUTO_DAEMON='true' \
+  -e UNRAID_HOST='ip' \
+  -e UNRAID_API_KEY='key' \
+  -p '8000:80/tcp' \
+    postal4093/ilo-fans-controller:latest
 ```
 
 ### Docker Compose
@@ -58,7 +63,7 @@ version: "3.8"
 
 services:
   ilo-fans-controller:
-    image: harbor.ics.fr/ics/ilo-fans-controller:latest
+    image: postal4093/ilo-fans-controller:latest
     ports:
       - "8080:80"
     environment:
@@ -201,7 +206,7 @@ More info: [Reddit post about iLO 4 patching](https://www.reddit.com/r/homelab/c
 
 - Original project by [alex3025](https://github.com/alex3025/ilo-fans-controller)
 
----
+- Forked From [jorisbertomeu](https://github.com/jorisbertomeu)
 
 ## 📝 License
 
