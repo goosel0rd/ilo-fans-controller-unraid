@@ -290,6 +290,7 @@ while (true) {
     $zoneDemands = [];
     foreach ($zoneTemps as $zone => $readings) {
         $zoneDemands[$zone] = calculate_fan_speed($readings, $profile, $zone);
+        printf("  %s: %.1f°C -> %d%%\n", ucfirst($zone), max($readings), $zoneDemands[$zone]);
     }
     // Fans without a configured zone follow the strongest system cooling demand.
     $baseSpeed = empty($zoneDemands) ? $profile['maxSpeed'] : max($zoneDemands);

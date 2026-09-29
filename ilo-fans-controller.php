@@ -251,9 +251,9 @@ function get_auto_control() {
 			'profile' => 'normal',
 			'fanZones' => [],
 			'profiles' => [
-				'silence' => ['label' => 'Silence', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 60, 'maxTemp' => 80, 'boostTemp' => 85],
-				'normal' => ['label' => 'Normal', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 60, 'maxTemp' => 80, 'boostTemp' => 85],
-				'turbo' => ['label' => 'Turbo', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 55, 'maxTemp' => 75, 'boostTemp' => 82],
+				'silence' => ['label' => 'Silence', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 75, 'maxTemp' => 85, 'boostTemp' => 90],
+				'normal' => ['label' => 'Normal', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 75, 'maxTemp' => 85, 'boostTemp' => 90],
+				'turbo' => ['label' => 'Turbo', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 70, 'maxTemp' => 80, 'boostTemp' => 85],
 			],
 			'checkInterval' => 30,
 			'daemonRunning' => false

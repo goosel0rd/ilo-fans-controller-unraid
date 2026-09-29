@@ -105,14 +105,14 @@ The daemon uses profiles to determine fan speeds based on CPU temperatures:
 
 | Profile | Normal Fan Range | Target Temp | Full quiet-range speed | Emergency boost |
 |---------|------------------|-------------|------------------------|-----------------|
-| **Silence** | 10% - 30% | 60°C | 80°C | 100% at 85°C |
-| **Normal** | 10% - 30% | 60°C | 80°C | 100% at 85°C |
-| **Turbo** | 10% - 30% | 55°C | 75°C | 100% at 82°C |
+| **Silence** | 10% - 30% | 75°C CPU | 85°C CPU | 100% at 90°C CPU |
+| **Normal** | 10% - 30% | 75°C CPU | 85°C CPU | 100% at 90°C CPU |
+| **Turbo** | 10% - 30% | 70°C CPU | 80°C CPU | 100% at 85°C CPU |
 
 ### How It Works
 
 1. The daemon reads all enabled iLO thermal sensors and Unraid drive temperatures every 20 seconds.
-2. Each zone has its own temperature curve. Normal speeds stay between 10% and 30%; the controller raises all fans to 100% only at the configured high-temperature boost threshold.
+2. Each zone has its own temperature curve. In the Normal profile, fans stay at 10% through typical idle temperatures, ramp from 10% to 30% as CPU temperature rises from 75°C to 85°C, and boost to 100% at 90°C. Storage starts ramping at 45°C and boosts at 60°C.
 3. Fans not assigned to a zone follow the strongest cooling demand across the system.
 4. Assign fans to zones by adding zero-based iLO fan indexes to `fanZones`. For example, after confirming fan positions from your server's fan list, set `"fanZones": {"cpu": [2, 3], "gpu": [0, 1], "storage": [4, 5]}`. These example indexes are placeholders: verify your physical fan layout before using them. Supported zones include `cpu`, `gpu`, `pci`, `memory`, `vr`, `storage`, `ambient`, `power`, `chipset`, and `other`.
 5. The emergency boost thresholds are intentionally configurable in `auto-control.json`; tune them against your server's sensor critical limits and workload behavior.
