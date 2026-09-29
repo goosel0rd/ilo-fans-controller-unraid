@@ -65,6 +65,7 @@ function get_temp_zone($name) {
 	$zones = [
 		'ambient' => ['inlet', 'exhaust', 'ambient'],
 		'cpu' => ['cpu', 'processor'],
+		'gpu' => ['gpu', 'graphics', 'accelerator'],
 		'memory' => ['dimm', 'mem'],
 		'vr' => ['vr p1', 'vr p2'],
 		'storage' => ['hd', 'storage', 'cntlr'],
@@ -87,6 +88,7 @@ function get_zone_info($zone) {
 	$zoneInfos = [
 		'ambient' => ['icon' => 'A', 'label' => 'Ambient', 'color' => 'sky'],
 		'cpu' => ['icon' => 'C', 'label' => 'CPUs', 'color' => 'violet'],
+		'gpu' => ['icon' => 'G', 'label' => 'GPUs', 'color' => 'rose'],
 		'memory' => ['icon' => 'M', 'label' => 'Memory', 'color' => 'pink'],
 		'vr' => ['icon' => 'V', 'label' => 'Regulators', 'color' => 'amber'],
 		'storage' => ['icon' => 'S', 'label' => 'Storage', 'color' => 'blue'],
@@ -230,7 +232,7 @@ function get_temperatures()
 	}
 
 	// Sort by logical order
-	$order = ['ambient', 'cpu', 'memory', 'vr', 'storage', 'power', 'chipset', 'pci', 'other'];
+	$order = ['ambient', 'cpu', 'gpu', 'memory', 'vr', 'storage', 'power', 'chipset', 'pci', 'other'];
 	$sorted = [];
 	foreach ($order as $zone) {
 		if (isset($grouped[$zone])) {
@@ -247,10 +249,11 @@ function get_auto_control() {
 		return [
 			'enabled' => false,
 			'profile' => 'normal',
+			'fanZones' => [],
 			'profiles' => [
-				'silence' => ['label' => 'Silence', 'minSpeed' => 10, 'maxSpeed' => 40, 'targetTemp' => 55, 'maxTemp' => 70],
-				'normal' => ['label' => 'Normal', 'minSpeed' => 20, 'maxSpeed' => 70, 'targetTemp' => 50, 'maxTemp' => 65],
-				'turbo' => ['label' => 'Turbo', 'minSpeed' => 40, 'maxSpeed' => 100, 'targetTemp' => 40, 'maxTemp' => 55],
+				'silence' => ['label' => 'Silence', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 60, 'maxTemp' => 80, 'boostTemp' => 85],
+				'normal' => ['label' => 'Normal', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 60, 'maxTemp' => 80, 'boostTemp' => 85],
+				'turbo' => ['label' => 'Turbo', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 55, 'maxTemp' => 75, 'boostTemp' => 82],
 			],
 			'checkInterval' => 30,
 			'daemonRunning' => false

@@ -11,6 +11,8 @@ services:
       ILO_PASSWORD: 'your-ilo-password'
       MINIMUM_FAN_SPEED: '10'
       AUTO_DAEMON: 'true'
+      UNRAID_HOST: 'your-unraid-ip'
+      UNRAID_API_KEY: 'your-read-only-api-key'
     volumes:
       - ilo-fans-data:/data
     deploy:

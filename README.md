@@ -20,10 +20,12 @@
 
 ### 🤖 Automatic Fan Control
 - **Background daemon** (`fan-daemon.php`) that adjusts fan speeds based on temperatures
-- **Three built-in profiles**: Silence, Normal, Turbo
+- **Three built-in profiles** with a quiet 10–30% fan range and a high-temperature emergency boost
+- **Zone-aware cooling** for CPU, GPU/PCI, memory, regulators, ambient, and storage sensors
+- **Per-fan zone routing** configurable by iLO fan index
 - **Manual/Auto toggle** in the web interface
 - **Hysteresis** to prevent fan oscillation (only changes speed if diff > 3%)
-- **Ambient temperature safety**: Forces Normal profile if inlet temp > 35°C
+- **Ambient temperature safety**: Forces Normal profile if inlet temp > 40°C
 - **Persistent configuration** via `auto-control.json`
 
 ### 🐳 Enhanced Docker Support
@@ -90,6 +92,8 @@ volumes:
 | `ILO_HOST` | IP address of your iLO interface | *required* |
 | `ILO_USERNAME` | iLO username | *required* |
 | `ILO_PASSWORD` | iLO password | *required* |
+| `UNRAID_HOST` | Unraid server address for disk temperatures | optional |
+| `UNRAID_API_KEY` | Read-only Unraid GraphQL API key | optional |
 | `MINIMUM_FAN_SPEED` | Minimum allowed fan speed (%) | `10` |
 | `AUTO_DAEMON` | Enable background auto-control daemon | `true` |
 
@@ -99,35 +103,36 @@ volumes:
 
 The daemon uses profiles to determine fan speeds based on CPU temperatures:
 
-| Profile | Fan Speed Range | Target Temp | Max Temp |
-|---------|-----------------|-------------|----------|
-| **Silence** | 10% - 40% | 55°C | 70°C |
-| **Normal** | 20% - 70% | 50°C | 65°C |
-| **Turbo** | 40% - 100% | 40°C | 55°C |
+| Profile | Normal Fan Range | Target Temp | Full quiet-range speed | Emergency boost |
+|---------|------------------|-------------|------------------------|-----------------|
+| **Silence** | 10% - 30% | 60°C | 80°C | 100% at 85°C |
+| **Normal** | 10% - 30% | 60°C | 80°C | 100% at 85°C |
+| **Turbo** | 10% - 30% | 55°C | 75°C | 100% at 82°C |
 
 ### How It Works
 
-1. The daemon reads CPU temperatures every 20-30 seconds
-2. Calculates optimal fan speed using linear interpolation:
-   - Below target temp → minimum speed
-   - Above max temp → maximum speed
-   - Between → proportional speed
-3. Applies hysteresis: only changes if new speed differs by > 3%
-4. Safety: Forces Normal profile if ambient temp > 35°C
+1. The daemon reads all enabled iLO thermal sensors and Unraid drive temperatures every 20 seconds.
+2. Each zone has its own temperature curve. Normal speeds stay between 10% and 30%; the controller raises all fans to 100% only at the configured high-temperature boost threshold.
+3. Fans not assigned to a zone follow the strongest cooling demand across the system.
+4. Assign fans to zones by adding zero-based iLO fan indexes to `fanZones`. For example, after confirming fan positions from your server's fan list, set `"fanZones": {"cpu": [2, 3], "gpu": [0, 1], "storage": [4, 5]}`. These example indexes are placeholders: verify your physical fan layout before using them. Supported zones include `cpu`, `gpu`, `pci`, `memory`, `vr`, `storage`, `ambient`, `power`, `chipset`, and `other`.
+5. The emergency boost thresholds are intentionally configurable in `auto-control.json`; tune them against your server's sensor critical limits and workload behavior.
 
 ### Configuration File (`auto-control.json`)
 
 ```json
 {
   "enabled": true,
-  "profile": "silence",
+  "profile": "normal",
+  "fanZones": {},
   "profiles": {
     "silence": {
       "label": "Silence",
       "minSpeed": 10,
-      "maxSpeed": 40,
-      "targetTemp": 55,
-      "maxTemp": 70
+      "maxSpeed": 30,
+      "targetTemp": 60,
+      "maxTemp": 80,
+      "boostSpeed": 100,
+      "boostTemp": 85
     }
   },
   "checkInterval": 20

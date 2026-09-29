@@ -2,7 +2,7 @@
 <?php
 /**
  * Fan Control Daemon
- * Uses CPU temps from iLO + real drive temps from Unraid GraphQL API
+ * Uses all iLO thermal zones plus Unraid drive temperatures.
  */
 
 require 'config.inc.php';
@@ -62,7 +62,7 @@ function get_ilo_temperatures()
     }
 
     $data = json_decode($raw_ilo_data, true);
-    $cpuTemps = [];
+    $zones = [];
     $ambientTemp = null;
     $fanCount = 0;
 
@@ -70,14 +70,13 @@ function get_ilo_temperatures()
         foreach ($data['Temperatures'] as $temp) {
             $name = strtolower($temp['Name'] ?? '');
             $reading = $temp['ReadingCelsius'] ?? null;
-            $status = $temp['Status']['State'] ?? 'Unknown';
+            $status = $temp['Status']['State'] ?? 'Enabled';
 
-            if ($reading !== null && $status === 'Enabled') {
-                if (strpos($name, 'cpu') !== false) {
-                    $cpuTemps[] = $reading;
-                }
-                if (strpos($name, 'inlet') !== false || strpos($name, 'ambient') !== false) {
-                    $ambientTemp = $reading;
+            if ($reading !== null && !in_array($status, ['Absent', 'Disabled', 'Unavailable'], true)) {
+                $zone = classify_temperature_zone($name);
+                $zones[$zone][] = (float) $reading;
+                if ($zone === 'ambient') {
+                    $ambientTemp = max($ambientTemp ?? (float) $reading, (float) $reading);
                 }
             }
         }
@@ -92,7 +91,29 @@ function get_ilo_temperatures()
         }
     }
 
-    return ['cpu' => $cpuTemps, 'ambient' => $ambientTemp, 'fanCount' => $fanCount];
+    return ['zones' => $zones, 'ambient' => $ambientTemp, 'fanCount' => $fanCount];
+}
+
+function classify_temperature_zone($name)
+{
+    $name = strtolower($name);
+    $patterns = [
+        'ambient' => ['inlet', 'exhaust', 'ambient'],
+        'cpu' => ['cpu', 'processor'],
+        'gpu' => ['gpu', 'graphics', 'accelerator'],
+        'memory' => ['dimm', 'memory', 'mem'],
+        'vr' => ['vr p1', 'vr p2', 'voltage regulator'],
+        'storage' => ['hd', 'storage', 'drive', 'cntlr'],
+        'power' => ['p/s', 'psu', 'power'],
+        'chipset' => ['chipset', 'ilo'],
+        'pci' => ['pci', 'slot'],
+    ];
+    foreach ($patterns as $zone => $needles) {
+        foreach ($needles as $needle) {
+            if (strpos($name, $needle) !== false) return $zone;
+        }
+    }
+    return 'other';
 }
 
 function get_unraid_disk_temperatures()
@@ -143,17 +164,23 @@ function get_unraid_disk_temperatures()
     return $temps;
 }
 
-function calculate_fan_speed($temps, $profile)
+function calculate_fan_speed($temps, $profile, $zone = null)
 {
     if (empty($temps)) {
-        return $profile['maxSpeed'];
+        return (int) $profile['maxSpeed'];
     }
 
     $maxTemp     = max($temps);
-    $targetTemp  = $profile['targetTemp'];
-    $criticalTemp = $profile['maxTemp'];
+    $curve = $profile['zoneCurves'][$zone] ?? $profile;
+    $targetTemp  = $curve['targetTemp'];
+    $criticalTemp = $curve['maxTemp'];
     $minSpeed    = $profile['minSpeed'];
     $maxSpeed    = $profile['maxSpeed'];
+
+    // Keep normal cooling quiet, but allow an explicit emergency boost.
+    if (isset($curve['boostTemp'], $profile['boostSpeed']) && $maxTemp >= $curve['boostTemp']) {
+        return (int) $profile['boostSpeed'];
+    }
 
     if ($maxTemp <= $targetTemp) {
         return $minSpeed;
@@ -165,12 +192,9 @@ function calculate_fan_speed($temps, $profile)
     }
 }
 
-function set_fan_speed($speed, $fanCount)
+function set_fan_speeds($speeds, $fanCount)
 {
     global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD, $MINIMUM_FAN_SPEED;
-
-    $speed = max($MINIMUM_FAN_SPEED, min(100, $speed));
-    $pwm = (int) ceil($speed / 100 * 255);
 
     try {
         $ssh = ssh2_connect($ILO_HOST, 22);
@@ -179,6 +203,8 @@ function set_fan_speed($speed, $fanCount)
         }
 
         for ($i = 0; $i < $fanCount; $i++) {
+            $speed = max($MINIMUM_FAN_SPEED, min(100, (int) ($speeds[$i] ?? $MINIMUM_FAN_SPEED)));
+            $pwm = (int) ceil($speed / 100 * 255);
             $stream = ssh2_exec($ssh, "fan p $i max $pwm; fan p $i min 255");
             if ($stream) {
                 stream_set_blocking($stream, true);
@@ -196,7 +222,7 @@ function set_fan_speed($speed, $fanCount)
     }
 }
 
-echo "=== Fan Control Daemon Started (CPU + Unraid Disk Temps) ===\n";
+echo "=== Fan Control Daemon Started (iLO Zones + Unraid Disk Temps) ===\n";
 echo "PID: " . getmypid() . "\n";
 echo "Config file: " . CONFIG_FILE . "\n\n";
 
@@ -222,10 +248,10 @@ while (true) {
         continue;
     }
 
-    $profileName = $config['profile'] ?? 'normal';
+    $profileName = strtolower($config['profile'] ?? 'normal');
     $profile = $config['profiles'][$profileName] ?? $config['profiles']['normal'];
 
-    // Get iLO temps (CPU + ambient + fan count)
+    // Get all iLO thermal zones and the available fan count.
     $iloData = get_ilo_temperatures();
     if ($iloData === null) {
         echo "[WARN] Could not fetch iLO temperatures\n";
@@ -233,7 +259,7 @@ while (true) {
         continue;
     }
 
-    $cpuTemps    = $iloData['cpu'];
+    $zoneTemps   = $iloData['zones'];
     $ambientTemp = $iloData['ambient'];
     $fanCount    = $iloData['fanCount'] ?: 8;
 
@@ -251,8 +277,8 @@ while (true) {
         echo " | Fans: {$fanCount}\n";
     }
 
-    $maxCpu  = !empty($cpuTemps) ? max($cpuTemps) : 0;
-    $maxDisk = !empty($diskTemps) ? max($diskTemps) : 0;
+    $zoneTemps['storage'] = array_merge($zoneTemps['storage'] ?? [], array_map('floatval', array_values($diskTemps)));
+    $maxCpu  = !empty($zoneTemps['cpu']) ? max($zoneTemps['cpu']) : 0;
 
     echo "  CPU: {$maxCpu}°C";
     if (!empty($diskTemps)) {
@@ -261,18 +287,35 @@ while (true) {
     }
     echo "\n";
 
-    // Combine all temps for fan speed calculation
-    $allTemps = array_merge($cpuTemps, array_values($diskTemps));
+    $zoneDemands = [];
+    foreach ($zoneTemps as $zone => $readings) {
+        $zoneDemands[$zone] = calculate_fan_speed($readings, $profile, $zone);
+    }
+    // Fans without a configured zone follow the strongest system cooling demand.
+    $baseSpeed = empty($zoneDemands) ? $profile['maxSpeed'] : max($zoneDemands);
+    $fanZones = $config['fanZones'] ?? [];
+    $fanSpeeds = array_fill(0, $fanCount, $baseSpeed);
+    foreach ($fanZones as $zone => $indices) {
+        if (empty($zoneTemps[$zone])) continue;
+        $zoneSpeed = calculate_fan_speed($zoneTemps[$zone], $profile, $zone);
+        foreach ($indices as $index) {
+            $index = (int) $index;
+            if ($index >= 0 && $index < $fanCount) $fanSpeeds[$index] = $zoneSpeed;
+        }
+    }
+    // A genuinely hot component overrides zone routing and boosts every fan.
+    $boostSpeed = max($fanSpeeds);
+    if ($boostSpeed > $profile['maxSpeed']) $fanSpeeds = array_fill(0, $fanCount, $boostSpeed);
+    echo "  Calculated fan speeds: " . implode(', ', $fanSpeeds) . "%\n";
 
-    $speed = calculate_fan_speed($allTemps, $profile);
-    echo "  Calculated speed: {$speed}%\n";
-
-    $speedDiff = abs($speed - ($lastSpeed ?? 0));
+    $speedDiff = $lastSpeed === null ? 100 : max(array_map(fn($s, $i) => abs($s - ($lastSpeed[$i] ?? 0)), $fanSpeeds, array_keys($fanSpeeds)));
     if ($lastSpeed === null || $speedDiff > 3) {
-        echo "  Applying new fan speed (diff: {$speedDiff}%)...\n";
-        if (set_fan_speed($speed, $fanCount)) {
-            echo "  [OK] Fans set to {$speed}%\n";
-            $lastSpeed = $speed;
+        echo "  Applying fan speeds (largest diff: {$speedDiff}%)...\n";
+        if (set_fan_speeds($fanSpeeds, $fanCount)) {
+            echo "  [OK] Fan speeds set to: " . implode(', ', $fanSpeeds) . "%\n";
+            $lastSpeed = $fanSpeeds;
+        } else {
+            echo "  [ERROR] Could not apply fan speeds\n";
         }
     } else {
         echo "  No change (diff: {$speedDiff}% < 3%)\n";

@@ -1,27 +1,61 @@
 {
     "enabled": true,
-    "profile": "Normal",
+    "profile": "normal",
+    "fanZones": {},
     "profiles": {
-        "silent": {
+        "silence": {
             "label": "Silent",
             "minSpeed": 10,
-            "maxSpeed": 40,
-            "targetTemp": 55,
-            "maxTemp": 70
+            "maxSpeed": 30,
+            "boostSpeed": 100,
+            "targetTemp": 60,
+            "maxTemp": 80,
+            "boostTemp": 85,
+            "zoneCurves": {
+                "cpu": {"targetTemp": 60, "maxTemp": 80, "boostTemp": 85},
+                "gpu": {"targetTemp": 60, "maxTemp": 80, "boostTemp": 85},
+                "pci": {"targetTemp": 60, "maxTemp": 80, "boostTemp": 85},
+                "storage": {"targetTemp": 40, "maxTemp": 50, "boostTemp": 55},
+                "memory": {"targetTemp": 65, "maxTemp": 85, "boostTemp": 90},
+                "vr": {"targetTemp": 70, "maxTemp": 90, "boostTemp": 100},
+                "ambient": {"targetTemp": 30, "maxTemp": 40, "boostTemp": 45}
+            }
         },
         "normal": {
             "label": "Normal",
-            "minSpeed": 15,
-            "maxSpeed": 70,
-            "targetTemp": 40,
-            "maxTemp": 65
+            "minSpeed": 10,
+            "maxSpeed": 30,
+            "boostSpeed": 100,
+            "targetTemp": 60,
+            "maxTemp": 80,
+            "boostTemp": 85,
+            "zoneCurves": {
+                "cpu": {"targetTemp": 60, "maxTemp": 80, "boostTemp": 85},
+                "gpu": {"targetTemp": 60, "maxTemp": 80, "boostTemp": 85},
+                "pci": {"targetTemp": 60, "maxTemp": 80, "boostTemp": 85},
+                "storage": {"targetTemp": 40, "maxTemp": 50, "boostTemp": 55},
+                "memory": {"targetTemp": 65, "maxTemp": 85, "boostTemp": 90},
+                "vr": {"targetTemp": 70, "maxTemp": 90, "boostTemp": 100},
+                "ambient": {"targetTemp": 30, "maxTemp": 40, "boostTemp": 45}
+            }
         },
         "turbo": {
             "label": "Turbo",
-            "minSpeed": 40,
-            "maxSpeed": 100,
-            "targetTemp": 40,
-            "maxTemp": 55
+            "minSpeed": 10,
+            "maxSpeed": 30,
+            "boostSpeed": 100,
+            "targetTemp": 55,
+            "maxTemp": 75,
+            "boostTemp": 82,
+            "zoneCurves": {
+                "cpu": {"targetTemp": 55, "maxTemp": 75, "boostTemp": 82},
+                "gpu": {"targetTemp": 55, "maxTemp": 75, "boostTemp": 82},
+                "pci": {"targetTemp": 55, "maxTemp": 75, "boostTemp": 82},
+                "storage": {"targetTemp": 40, "maxTemp": 50, "boostTemp": 55},
+                "memory": {"targetTemp": 65, "maxTemp": 85, "boostTemp": 90},
+                "vr": {"targetTemp": 70, "maxTemp": 90, "boostTemp": 100},
+                "ambient": {"targetTemp": 30, "maxTemp": 40, "boostTemp": 45}
+            }
         }
     },
     "checkInterval": 20
