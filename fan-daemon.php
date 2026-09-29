@@ -101,6 +101,7 @@ function classify_temperature_zone($name)
         'ambient' => ['inlet', 'exhaust', 'ambient'],
         'cpu' => ['cpu', 'processor'],
         'gpu' => ['gpu', 'graphics', 'accelerator'],
+        'fpga' => ['fpga'],
         'memory' => ['dimm', 'memory', 'mem'],
         'vr' => ['vr p1', 'vr p2', 'voltage regulator'],
         'storage' => ['hd', 'storage', 'drive', 'cntlr'],
@@ -277,7 +278,10 @@ while (true) {
         echo " | Fans: {$fanCount}\n";
     }
 
-    $zoneTemps['storage'] = array_merge($zoneTemps['storage'] ?? [], array_map('floatval', array_values($diskTemps)));
+    // Unraid reports actual drive temperatures; prefer those over iLO's storage-zone sensor.
+    if (!empty($diskTemps)) {
+        $zoneTemps['storage'] = array_map('floatval', array_values($diskTemps));
+    }
     $maxCpu  = !empty($zoneTemps['cpu']) ? max($zoneTemps['cpu']) : 0;
 
     echo "  CPU: {$maxCpu}°C";
@@ -296,12 +300,19 @@ while (true) {
     $baseSpeed = empty($zoneDemands) ? $profile['maxSpeed'] : max($zoneDemands);
     $fanZones = $config['fanZones'] ?? [];
     $fanSpeeds = array_fill(0, $fanCount, $baseSpeed);
+    $mappedFans = [];
     foreach ($fanZones as $zone => $indices) {
         if (empty($zoneTemps[$zone])) continue;
         $zoneSpeed = calculate_fan_speed($zoneTemps[$zone], $profile, $zone);
         foreach ($indices as $index) {
             $index = (int) $index;
-            if ($index >= 0 && $index < $fanCount) $fanSpeeds[$index] = $zoneSpeed;
+            if ($index >= 0 && $index < $fanCount) {
+                // A fan can cool multiple zones (for example GPU and FPGA); honor the higher demand.
+                $fanSpeeds[$index] = isset($mappedFans[$index])
+                    ? max($fanSpeeds[$index], $zoneSpeed)
+                    : $zoneSpeed;
+                $mappedFans[$index] = true;
+            }
         }
     }
     // A genuinely hot component overrides zone routing and boosts every fan.

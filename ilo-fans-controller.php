@@ -66,6 +66,7 @@ function get_temp_zone($name) {
 		'ambient' => ['inlet', 'exhaust', 'ambient'],
 		'cpu' => ['cpu', 'processor'],
 		'gpu' => ['gpu', 'graphics', 'accelerator'],
+		'fpga' => ['fpga'],
 		'memory' => ['dimm', 'mem'],
 		'vr' => ['vr p1', 'vr p2'],
 		'storage' => ['hd', 'storage', 'cntlr'],
@@ -89,6 +90,7 @@ function get_zone_info($zone) {
 		'ambient' => ['icon' => 'A', 'label' => 'Ambient', 'color' => 'sky'],
 		'cpu' => ['icon' => 'C', 'label' => 'CPUs', 'color' => 'violet'],
 		'gpu' => ['icon' => 'G', 'label' => 'GPUs', 'color' => 'rose'],
+		'fpga' => ['icon' => 'F', 'label' => 'FPGA', 'color' => 'amber'],
 		'memory' => ['icon' => 'M', 'label' => 'Memory', 'color' => 'pink'],
 		'vr' => ['icon' => 'V', 'label' => 'Regulators', 'color' => 'amber'],
 		'storage' => ['icon' => 'S', 'label' => 'Storage', 'color' => 'blue'],
@@ -232,7 +234,7 @@ function get_temperatures()
 	}
 
 	// Sort by logical order
-	$order = ['ambient', 'cpu', 'gpu', 'memory', 'vr', 'storage', 'power', 'chipset', 'pci', 'other'];
+	$order = ['ambient', 'cpu', 'gpu', 'fpga', 'memory', 'vr', 'storage', 'power', 'chipset', 'pci', 'other'];
 	$sorted = [];
 	foreach ($order as $zone) {
 		if (isset($grouped[$zone])) {
