@@ -23,6 +23,8 @@
 - **Three built-in profiles** with a quiet 10–30% fan range and a high-temperature emergency boost
 - **Zone-aware cooling** for CPU, GPU/PCI, memory, regulators, ambient, and storage sensors
 - **Per-fan zone routing** configurable by iLO fan index
+- **Live tuning sliders** for each zone's ramp and boost thresholds, fan speeds, change threshold, ambient safety, and check interval
+- **Portable configuration bundles** to export/import all auto-control profiles, fan assignments, and manual presets as JSON
 - **Manual/Auto toggle** in the web interface
 - **Hysteresis** to prevent fan oscillation (only changes speed if diff > 3%)
 - **Ambient temperature safety**: Forces Normal profile if inlet temp > 40°C
@@ -101,7 +103,7 @@ volumes:
 
 ## 🎛️ Auto-Control Profiles
 
-The daemon uses profiles to determine fan speeds based on CPU temperatures:
+The daemon uses profiles with per-zone curves for all detected iLO thermal sensors and Unraid disk temperatures:
 
 | Profile | Normal Fan Range | Target Temp | Full quiet-range speed | Emergency boost |
 |---------|------------------|-------------|------------------------|-----------------|
@@ -117,22 +119,37 @@ The daemon uses profiles to determine fan speeds based on CPU temperatures:
 4. `fanZones` uses zero-based indexes into the iLO fan list. The current mapping is fan 1 → storage (`[0]`), fans 2–3 → CPU (`[1, 2]`), and fan 4 → GPU/PCI/FPGA (`[3]`). If multiple mapped zones share a fan, it follows the highest demand among them. When Unraid disk temperatures are available, they replace iLO storage-zone readings for fan control; iLO storage readings are the fallback. Supported zones include `cpu`, `gpu`, `fpga`, `pci`, `memory`, `vr`, `storage`, `ambient`, `power`, `chipset`, and `other`.
 5. The emergency boost thresholds are intentionally configurable in `auto-control.json`; tune them against your server's sensor critical limits and workload behavior.
 
+Use **Fan tuning and configuration** on the web page to edit profiles, per-zone curves, fan assignments, storage sensor preference, fan change threshold, ambient safety threshold, and control interval. Slider changes save automatically and are picked up by the daemon on its next cycle. **Export settings** downloads a JSON bundle containing all auto-control settings and manual fan presets. **Import settings** replaces those settings after validation. Connection credentials and deployment environment variables are excluded from the bundle. The controller still keeps its working copy in its application directory; export a bundle to preserve settings across Docker container replacement, then import it into the new container.
+
 ### Configuration File (`auto-control.json`)
 
 ```json
 {
   "enabled": true,
   "profile": "normal",
-  "fanZones": {},
+  "hysteresis": 3,
+  "ambientSafetyTemp": 40,
+  "preferUnraidStorage": true,
+  "fanZones": {
+    "storage": [0],
+    "cpu": [1, 2],
+    "gpu": [3],
+    "pci": [3],
+    "fpga": [3]
+  },
   "profiles": {
     "silence": {
       "label": "Silence",
       "minSpeed": 10,
       "maxSpeed": 30,
-      "targetTemp": 60,
-      "maxTemp": 80,
+      "targetTemp": 75,
+      "maxTemp": 85,
       "boostSpeed": 100,
-      "boostTemp": 85
+      "boostTemp": 90,
+      "zoneCurves": {
+        "cpu": {"targetTemp": 75, "maxTemp": 85, "boostTemp": 90},
+        "storage": {"targetTemp": 50, "maxTemp": 60, "boostTemp": 65}
+      }
     }
   },
   "checkInterval": 20

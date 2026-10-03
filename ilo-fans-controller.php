@@ -4,7 +4,8 @@ require 'config.inc.php';
 
 function get_presets()
 {
-	if (!file_exists('presets.json'))  // Return default presets if the file doesn't exist
+	$presetsFile = __DIR__ . '/presets.json';
+	if (!file_exists($presetsFile))  // Return default presets if the file doesn't exist
 		return [
 			[
 				'name' => 'Silent Mode',
@@ -20,7 +21,60 @@ function get_presets()
 			]
 		];
 	else
-		return json_decode(file_get_contents('presets.json'), true);
+		return json_decode(file_get_contents($presetsFile), true);
+}
+
+function validate_config_bundle($bundle)
+{
+	if (!is_array($bundle) || ($bundle['format'] ?? '') !== 'ilo-fans-controller-config' || ($bundle['version'] ?? null) !== 1) {
+		return 'Unsupported or invalid configuration bundle.';
+	}
+	$config = $bundle['autoControl'] ?? null;
+	$presets = $bundle['presets'] ?? null;
+	if (!is_array($config) || !is_bool($config['enabled'] ?? null) || !is_string($config['profile'] ?? null)
+		|| !is_array($config['profiles'] ?? null) || !isset($config['profiles'][$config['profile']])
+		|| !is_array($config['fanZones'] ?? null) || !is_numeric($config['hysteresis'] ?? null)
+		|| !is_bool($config['preferUnraidStorage'] ?? null)
+		|| $config['hysteresis'] < 0 || $config['hysteresis'] > 20
+		|| !is_numeric($config['ambientSafetyTemp'] ?? null) || $config['ambientSafetyTemp'] < 20 || $config['ambientSafetyTemp'] > 80
+		|| !is_numeric($config['checkInterval'] ?? null)
+		|| $config['checkInterval'] < 5 || $config['checkInterval'] > 300 || !is_array($presets)) {
+		return 'The bundle is missing valid auto-control settings or presets.';
+	}
+	foreach ($config['profiles'] as $profile) {
+		if (!is_array($profile)) return 'A profile in the bundle is invalid.';
+		foreach (['minSpeed', 'maxSpeed', 'boostSpeed'] as $key) {
+			if (!is_numeric($profile[$key] ?? null) || $profile[$key] < 0 || $profile[$key] > 100) return "Invalid profile speed: $key.";
+		}
+		if ($profile['minSpeed'] > $profile['maxSpeed'] || $profile['maxSpeed'] > $profile['boostSpeed']) return 'Profile speeds must be in ascending order.';
+		foreach (['targetTemp', 'maxTemp', 'boostTemp'] as $key) {
+			if (!is_numeric($profile[$key] ?? null) || $profile[$key] < 0 || $profile[$key] > 150) return "Invalid profile temperature: $key.";
+		}
+		if ($profile['targetTemp'] >= $profile['maxTemp'] || $profile['maxTemp'] >= $profile['boostTemp']) return 'Profile temperatures must be in ascending order.';
+		if (!is_array($profile['zoneCurves'] ?? null)) return 'A profile is missing its zone curves.';
+		foreach ($profile['zoneCurves'] as $curve) {
+			if (!is_array($curve)) return 'A zone curve in the bundle is invalid.';
+			foreach (['targetTemp', 'maxTemp', 'boostTemp'] as $key) {
+				if (!is_numeric($curve[$key] ?? null) || $curve[$key] < 0 || $curve[$key] > 150) return "Invalid zone temperature: $key.";
+			}
+			if ($curve['targetTemp'] >= $curve['maxTemp'] || $curve['maxTemp'] >= $curve['boostTemp']) return 'Zone temperatures must be in ascending order.';
+		}
+	}
+	foreach ($config['fanZones'] as $indices) {
+		if (!is_array($indices)) return 'Fan zone assignments must be lists of indexes.';
+		foreach ($indices as $index) {
+			if (!is_numeric($index) || (int) $index != $index || $index < 0 || $index > 31) return 'A fan index is invalid.';
+		}
+	}
+	foreach ($presets as $preset) {
+		if (!is_array($preset) || !is_string($preset['name'] ?? null) || !is_array($preset['speeds'] ?? null) || count($preset['speeds']) < 1 || count($preset['speeds']) > 32) {
+			return 'A fan preset in the bundle is invalid.';
+		}
+		foreach ($preset['speeds'] as $speed) {
+			if (!is_numeric($speed) || $speed < 0 || $speed > 100) return 'A preset speed is invalid.';
+		}
+	}
+	return null;
 }
 
 function get_fans()
@@ -245,23 +299,61 @@ function get_temperatures()
 	return $sorted;
 }
 
+function get_default_zone_curves() {
+	return [
+		'cpu' => ['targetTemp' => 75, 'maxTemp' => 85, 'boostTemp' => 90],
+		'gpu' => ['targetTemp' => 70, 'maxTemp' => 85, 'boostTemp' => 90],
+		'fpga' => ['targetTemp' => 70, 'maxTemp' => 85, 'boostTemp' => 90],
+		'pci' => ['targetTemp' => 70, 'maxTemp' => 85, 'boostTemp' => 90],
+		'storage' => ['targetTemp' => 50, 'maxTemp' => 60, 'boostTemp' => 65],
+		'memory' => ['targetTemp' => 75, 'maxTemp' => 90, 'boostTemp' => 95],
+		'vr' => ['targetTemp' => 80, 'maxTemp' => 95, 'boostTemp' => 105],
+		'ambient' => ['targetTemp' => 35, 'maxTemp' => 45, 'boostTemp' => 50],
+	];
+}
+
 function get_auto_control() {
+	global $MINIMUM_FAN_SPEED;
 	$configFile = __DIR__ . '/auto-control.json';
 	if (!file_exists($configFile)) {
+		$zoneCurves = get_default_zone_curves();
 		return [
 			'enabled' => false,
 			'profile' => 'normal',
-			'fanZones' => [],
+			'hysteresis' => 3,
+			'ambientSafetyTemp' => 40,
+			'preferUnraidStorage' => true,
+			'fanZones' => ['storage' => [0], 'cpu' => [1, 2], 'gpu' => [3], 'pci' => [3], 'fpga' => [3]],
 			'profiles' => [
-				'silence' => ['label' => 'Silence', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 75, 'maxTemp' => 85, 'boostTemp' => 90],
-				'normal' => ['label' => 'Normal', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 75, 'maxTemp' => 85, 'boostTemp' => 90],
-				'turbo' => ['label' => 'Turbo', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 70, 'maxTemp' => 80, 'boostTemp' => 85],
+				'silence' => ['label' => 'Silence', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 75, 'maxTemp' => 85, 'boostTemp' => 90, 'zoneCurves' => $zoneCurves],
+				'normal' => ['label' => 'Normal', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 75, 'maxTemp' => 85, 'boostTemp' => 90, 'zoneCurves' => $zoneCurves],
+				'turbo' => ['label' => 'Turbo', 'minSpeed' => 10, 'maxSpeed' => 30, 'boostSpeed' => 100, 'targetTemp' => 70, 'maxTemp' => 80, 'boostTemp' => 85, 'zoneCurves' => $zoneCurves],
 			],
 			'checkInterval' => 30,
 			'daemonRunning' => false
 		];
 	}
 	$config = json_decode(file_get_contents($configFile), true);
+	if (isset($config['profiles']['silent']) && !isset($config['profiles']['silence'])) {
+		$config['profiles']['silence'] = $config['profiles']['silent'];
+		unset($config['profiles']['silent']);
+		if (($config['profile'] ?? '') === 'silent') $config['profile'] = 'silence';
+	}
+	$zoneDefaults = get_default_zone_curves();
+	$config['profile'] = strtolower($config['profile'] ?? 'normal');
+	$config['hysteresis'] = $config['hysteresis'] ?? 3;
+	$config['ambientSafetyTemp'] = $config['ambientSafetyTemp'] ?? 40;
+	$config['preferUnraidStorage'] = $config['preferUnraidStorage'] ?? true;
+	$config['fanZones'] = $config['fanZones'] ?? ['storage' => [0], 'cpu' => [1, 2], 'gpu' => [3], 'pci' => [3], 'fpga' => [3]];
+	foreach ($config['profiles'] as &$profile) {
+		$profile['minSpeed'] = max((int) $MINIMUM_FAN_SPEED, (int) ($profile['minSpeed'] ?? $MINIMUM_FAN_SPEED));
+		$profile['maxSpeed'] = max((int) ($profile['maxSpeed'] ?? 30), min(100, $profile['minSpeed'] + 1));
+		$profile['boostSpeed'] = $profile['boostSpeed'] ?? 100;
+		$profile['boostSpeed'] = max($profile['maxSpeed'], (int) $profile['boostSpeed']);
+		$profile['boostTemp'] = $profile['boostTemp'] ?? min(120, $profile['maxTemp'] + 5);
+		$profile['zoneCurves'] = array_merge($zoneDefaults, $profile['zoneCurves'] ?? []);
+	}
+	unset($profile);
 
 	// Check if daemon is running
 	$pidFile = __DIR__ . '/fan-daemon.pid';
@@ -279,7 +371,10 @@ function get_auto_control() {
 function save_auto_control($config) {
 	$configFile = __DIR__ . '/auto-control.json';
 	unset($config['daemonRunning']); // Don't save runtime state
-	file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT));
+	if (file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT)) === false) {
+		http_response_code(500);
+		return ['error' => 'Could not save settings. Check container file permissions.'];
+	}
 	return get_auto_control();
 }
 
@@ -308,6 +403,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 	$PRESETS = get_presets();
 
+	// Downloadable configuration bundle: tuning profiles, fan map, timing, and manual presets.
+	if (isset($_GET['api']) && $_GET['api'] === 'config-bundle') {
+		header('Content-Type: application/json');
+		header('Content-Disposition: attachment; filename="ilo-fans-controller-config.json"');
+		$exportConfig = $AUTO_CONTROL;
+		unset($exportConfig['daemonRunning']);
+		die(json_encode([
+			'format' => 'ilo-fans-controller-config',
+			'version' => 1,
+			'autoControl' => $exportConfig,
+			'presets' => $PRESETS,
+		], JSON_PRETTY_PRINT));
+	}
+
 	// Return presets in JSON format with ?api=presets
 	if (isset($_GET['api']) && $_GET['api'] == 'presets') {
 		header('Content-Type: application/json');
@@ -319,7 +428,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 	$data = json_decode(file_get_contents('php://input'), true);
 
 	if (isset($data['action']))  // Check if the action key exists
-		if ($data['action'] === 'fans' || $data['action'] === 'presets' || $data['action'] === 'autocontrol')  // Check if the action is valid
+		if ($data['action'] === 'fans' || $data['action'] === 'presets' || $data['action'] === 'autocontrol' || $data['action'] === 'importConfig')  // Check if the action is valid
 			if ($data['action'] === 'fans' && isset($data['fans'])) {  // Set fans speeds
 				$FANS = get_fans();
 
@@ -368,11 +477,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				die(json_encode($FANS, JSON_PRETTY_PRINT));
 			} else if ($data['action'] === 'presets' && isset($data['presets'])) {  // Save presets to presets.json
 				$raw_presets = json_encode($data['presets'], JSON_PRETTY_PRINT);
-				file_put_contents('presets.json', $raw_presets);
+				file_put_contents(__DIR__ . '/presets.json', $raw_presets);
 				die($raw_presets);
 			} else if ($data['action'] === 'autocontrol' && isset($data['config'])) {  // Save auto-control config
 				header('Content-Type: application/json');
 				die(json_encode(save_auto_control($data['config'])));
+			} else if ($data['action'] === 'importConfig' && isset($data['bundle'])) {
+				header('Content-Type: application/json');
+				$error = validate_config_bundle($data['bundle']);
+				if ($error !== null) {
+					http_response_code(400);
+					die(json_encode(['error' => $error]));
+				}
+				$config = $data['bundle']['autoControl'];
+				unset($config['daemonRunning']);
+				$minimumFanSpeed = (int) $MINIMUM_FAN_SPEED;
+				foreach ($config['profiles'] as &$profile) {
+					$profile['minSpeed'] = max($minimumFanSpeed, (int) $profile['minSpeed']);
+					$profile['maxSpeed'] = max((int) $profile['maxSpeed'], min(100, $profile['minSpeed'] + 1));
+					$profile['boostSpeed'] = max((int) $profile['boostSpeed'], $profile['maxSpeed']);
+				}
+				unset($profile);
+				$configFile = __DIR__ . '/auto-control.json';
+				$presetsFile = __DIR__ . '/presets.json';
+				$configJson = json_encode($config, JSON_PRETTY_PRINT);
+				$presetsJson = json_encode($data['bundle']['presets'], JSON_PRETTY_PRINT);
+				if (file_put_contents($configFile, $configJson) === false || file_put_contents($presetsFile, $presetsJson) === false) {
+					http_response_code(500);
+					die(json_encode(['error' => 'Could not save the imported configuration. Check container file permissions.']));
+				}
+				die(json_encode(['autoControl' => get_auto_control(), 'presets' => get_presets()]));
 			} else
 				die('Invalid request: missing required key.');
 		else
@@ -427,6 +561,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				@apply transition-all duration-75 outline-none border rounded-md dark:shadow bg-gray-50 border-gray-175
 							 disabled:opacity-50 placeholder-gray-300 dark:text-gray-200 dark:placeholder-gray-750 dark:bg-gray-900 dark:focus:border-gray-825
 							 dark:border-gray-875 dark:enabled:hover:border-gray-825 hover:border-gray-275 focus:border-gray-275;
+			}
+
+			input[type="range"] {
+				@apply border-0 shadow-none bg-transparent dark:bg-transparent;
 			}
 
 			.tooltip {
@@ -624,6 +762,113 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				</p>
 			</div>
 		</div>
+
+		<!-- Editable auto-control curves and portable settings -->
+		<details class="mb-4 rounded-lg border dark:border-gray-800 border-gray-200 dark:bg-gray-900/50 bg-gray-50" open>
+			<summary class="cursor-pointer select-none px-4 py-3 font-semibold dark:text-gray-200 text-gray-800">Fan tuning and configuration</summary>
+			<div class="px-4 pb-4 space-y-4" x-data>
+				<div class="flex flex-wrap items-center justify-between gap-3">
+					<p class="text-sm dark:text-gray-400 text-gray-600">Changes save automatically and the daemon picks them up on its next cycle.</p>
+					<div class="flex flex-wrap gap-2">
+						<button type="button" class="outline-button px-3 py-1.5 text-sm" @click="$store.autoControl.exportBundle()">Export settings</button>
+						<button type="button" class="outline-button px-3 py-1.5 text-sm" @click="$refs.configImport.click()">Import settings</button>
+						<input x-ref="configImport" type="file" accept="application/json,.json" class="hidden" @change="$store.autoControl.importBundle($event)">
+					</div>
+				</div>
+				<p x-show="$store.autoControl.status" x-text="$store.autoControl.status" class="text-xs dark:text-emerald-400 text-emerald-700"></p>
+
+				<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+					<label class="text-sm dark:text-gray-300 text-gray-700">Active profile (sliders below edit this profile)
+						<select class="input ml-2" x-model="$store.autoControl.config.profile" @change="$store.autoControl.save()">
+							<template x-for="(profile, key) in $store.autoControl.config.profiles" :key="key"><option :value="key" x-text="profile.label"></option></template>
+						</select>
+					</label>
+					<label class="text-sm dark:text-gray-300 text-gray-700">Control interval: <span x-text="$store.autoControl.config.checkInterval + 's'"></span>
+						<input class="block w-full accent-emerald-500" type="range" min="5" max="300" step="5" x-model.number="$store.autoControl.config.checkInterval" @input.debounce.500ms="$store.autoControl.save()">
+					</label>
+				</div>
+				<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+					<label class="text-sm dark:text-gray-300 text-gray-700">Change threshold: <span x-text="$store.autoControl.config.hysteresis + '%'"></span>
+						<input class="block w-full accent-emerald-500" type="range" min="0" max="20" x-model.number="$store.autoControl.config.hysteresis" @input.debounce.500ms="$store.autoControl.save()">
+					</label>
+					<label class="text-sm dark:text-gray-300 text-gray-700">Silence profile ambient safety: <span x-text="$store.autoControl.config.ambientSafetyTemp + '°C'"></span>
+						<input class="block w-full accent-emerald-500" type="range" min="20" max="80" x-model.number="$store.autoControl.config.ambientSafetyTemp" @input.debounce.500ms="$store.autoControl.save()">
+					</label>
+				</div>
+				<label class="inline-flex items-center gap-2 text-sm dark:text-gray-300 text-gray-700">
+					<input type="checkbox" x-model="$store.autoControl.config.preferUnraidStorage" @change="$store.autoControl.save()">
+					Prefer Unraid disk temperatures over iLO storage sensors
+				</label>
+
+				<template x-if="$store.autoControl.config.profiles[$store.autoControl.config.profile]">
+					<div class="space-y-4" x-data>
+						<div>
+							<h3 class="text-sm font-semibold mb-2 dark:text-gray-200 text-gray-800">Fan speeds</h3>
+							<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+								<label class="text-xs dark:text-gray-400 text-gray-600">Minimum: <span x-text="$store.autoControl.config.profiles[$store.autoControl.config.profile].minSpeed + '%' "></span>
+									<input class="block w-full accent-emerald-500" type="range" min="<?php echo (int) $MINIMUM_FAN_SPEED; ?>" :max="$store.autoControl.config.profiles[$store.autoControl.config.profile].maxSpeed - 1" x-model.number="$store.autoControl.config.profiles[$store.autoControl.config.profile].minSpeed" @input.debounce.500ms="$store.autoControl.save()">
+								</label>
+								<label class="text-xs dark:text-gray-400 text-gray-600">Quiet range cap: <span x-text="$store.autoControl.config.profiles[$store.autoControl.config.profile].maxSpeed + '%' "></span>
+									<input class="block w-full accent-emerald-500" type="range" :min="$store.autoControl.config.profiles[$store.autoControl.config.profile].minSpeed + 1" :max="$store.autoControl.config.profiles[$store.autoControl.config.profile].boostSpeed - 1" x-model.number="$store.autoControl.config.profiles[$store.autoControl.config.profile].maxSpeed" @input.debounce.500ms="$store.autoControl.save()">
+								</label>
+								<label class="text-xs dark:text-gray-400 text-gray-600">Emergency boost speed: <span x-text="$store.autoControl.config.profiles[$store.autoControl.config.profile].boostSpeed + '%' "></span>
+									<input class="block w-full accent-rose-500" type="range" :min="$store.autoControl.config.profiles[$store.autoControl.config.profile].maxSpeed + 1" max="100" x-model.number="$store.autoControl.config.profiles[$store.autoControl.config.profile].boostSpeed" @input.debounce.500ms="$store.autoControl.save()">
+								</label>
+							</div>
+						</div>
+
+						<div>
+							<h3 class="text-sm font-semibold mb-2 dark:text-gray-200 text-gray-800">Fallback curve for unclassified sensors</h3>
+							<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+								<label class="text-xs dark:text-gray-400 text-gray-600">Ramp starts: <span x-text="$store.autoControl.config.profiles[$store.autoControl.config.profile].targetTemp + '°C'"></span>
+									<input class="block w-full accent-emerald-500" type="range" min="20" :max="$store.autoControl.config.profiles[$store.autoControl.config.profile].maxTemp - 1" x-model.number="$store.autoControl.config.profiles[$store.autoControl.config.profile].targetTemp" @input.debounce.500ms="$store.autoControl.save()">
+								</label>
+								<label class="text-xs dark:text-gray-400 text-gray-600">Quiet range ends: <span x-text="$store.autoControl.config.profiles[$store.autoControl.config.profile].maxTemp + '°C'"></span>
+									<input class="block w-full accent-emerald-500" type="range" :min="$store.autoControl.config.profiles[$store.autoControl.config.profile].targetTemp + 1" :max="$store.autoControl.config.profiles[$store.autoControl.config.profile].boostTemp - 1" x-model.number="$store.autoControl.config.profiles[$store.autoControl.config.profile].maxTemp" @input.debounce.500ms="$store.autoControl.save()">
+								</label>
+								<label class="text-xs dark:text-gray-400 text-gray-600">Emergency boost at: <span x-text="$store.autoControl.config.profiles[$store.autoControl.config.profile].boostTemp + '°C'"></span>
+									<input class="block w-full accent-rose-500" type="range" :min="$store.autoControl.config.profiles[$store.autoControl.config.profile].maxTemp + 1" max="120" x-model.number="$store.autoControl.config.profiles[$store.autoControl.config.profile].boostTemp" @input.debounce.500ms="$store.autoControl.save()">
+								</label>
+							</div>
+						</div>
+
+						<div>
+							<h3 class="text-sm font-semibold mb-2 dark:text-gray-200 text-gray-800">Temperature sensitivity by zone</h3>
+							<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+								<template x-for="(curve, zone) in ($store.autoControl.config.profiles[$store.autoControl.config.profile].zoneCurves || {})" :key="zone">
+									<div class="rounded-md border dark:border-gray-800 border-gray-200 p-3">
+										<h4 class="capitalize text-sm font-medium mb-2 dark:text-gray-200 text-gray-800" x-text="zone"></h4>
+										<div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+											<label class="text-xs dark:text-gray-400 text-gray-600">Ramp starts: <span x-text="curve.targetTemp + '°C'"></span><input class="block w-full accent-emerald-500" type="range" min="20" :max="curve.maxTemp - 1" x-model.number="curve.targetTemp" @input.debounce.500ms="$store.autoControl.save()"></label>
+											<label class="text-xs dark:text-gray-400 text-gray-600">Quiet range ends: <span x-text="curve.maxTemp + '°C'"></span><input class="block w-full accent-emerald-500" type="range" :min="curve.targetTemp + 1" :max="curve.boostTemp - 1" x-model.number="curve.maxTemp" @input.debounce.500ms="$store.autoControl.save()"></label>
+											<label class="text-xs dark:text-gray-400 text-gray-600">Boost at: <span x-text="curve.boostTemp + '°C'"></span><input class="block w-full accent-rose-500" type="range" :min="curve.maxTemp + 1" max="120" x-model.number="curve.boostTemp" @input.debounce.500ms="$store.autoControl.save()"></label>
+										</div>
+									</div>
+								</template>
+							</div>
+						</div>
+
+						<div>
+							<h3 class="text-sm font-semibold mb-2 dark:text-gray-200 text-gray-800">Fan zone assignments</h3>
+							<p class="text-xs mb-2 dark:text-gray-500 text-gray-500">A fan assigned to multiple zones follows whichever zone currently needs more cooling.</p>
+							<div class="space-y-2">
+								<template x-for="(fanName, fanIndex) in Object.keys($store.fans.fans)" :key="fanName">
+									<div class="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border dark:border-gray-800 border-gray-200 p-2">
+										<span class="text-xs font-medium dark:text-gray-300 text-gray-700" x-text="'Fan ' + (fanIndex + 1) + ' · ' + fanName"></span>
+										<template x-for="zone in ['storage', 'cpu', 'gpu', 'pci', 'fpga', 'memory', 'vr', 'ambient', 'power', 'chipset', 'other']" :key="zone">
+											<label class="inline-flex items-center gap-1 text-xs capitalize dark:text-gray-400 text-gray-600">
+												<input type="checkbox" :checked="($store.autoControl.config.fanZones?.[zone] || []).map(Number).includes(fanIndex)" @change="$store.autoControl.setFanZone(zone, fanIndex, $event.target.checked)">
+												<span x-text="zone"></span>
+											</label>
+										</template>
+									</div>
+								</template>
+							</div>
+						</div>
+					</div>
+				</template>
+			</div>
+		</details>
 
 		<div class="flex flex-col sm:flex-row items-center" :class="$store.autoControl.config.enabled ? 'opacity-50 pointer-events-none' : ''">
 			<div x-data="{ showTooltip: false }" class="relative">
@@ -967,18 +1212,97 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 			Alpine.store('autoControl', {
 				config: <?php echo json_encode($AUTO_CONTROL); ?>,
+				status: '',
+				savePromise: null,
+				saveQueued: false,
 
 				async save() {
+					if (this.savePromise) {
+						this.saveQueued = true;
+						return this.savePromise;
+					}
+					this.savePromise = (async () => {
+						do {
+							this.saveQueued = false;
+							try {
+								const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+									method: 'POST',
+									body: JSON.stringify({ action: 'autocontrol', config: this.config }),
+								});
+								if (res.ok) {
+									const saved = await res.json();
+									if (!this.saveQueued) this.config.daemonRunning = saved.daemonRunning;
+								} else {
+									this.status = 'Could not save settings';
+									return false;
+								}
+							} catch (e) {
+								console.error('Failed to save auto-control config:', e);
+								this.status = 'Could not save settings';
+								return false;
+							}
+						} while (this.saveQueued);
+						this.status = 'Settings saved';
+						return true;
+					})();
+					const result = await this.savePromise;
+					this.savePromise = null;
+					return result;
+				},
+
+				setFanZone(zone, fanIndex, enabled) {
+					if (!this.config.fanZones) this.config.fanZones = {};
+					if (!this.config.fanZones[zone]) this.config.fanZones[zone] = [];
+					const indexes = this.config.fanZones[zone].map(Number).filter(index => index !== fanIndex);
+					if (enabled) indexes.push(fanIndex);
+					this.config.fanZones[zone] = indexes.sort((a, b) => a - b);
+					this.save();
+				},
+
+				async exportBundle() {
+					if (!await this.save()) return;
 					try {
+						const res = await fetch('<?php echo htmlspecialchars($_SERVER['PHP_SELF'], ENT_QUOTES); ?>?api=config-bundle');
+						if (!res.ok) throw new Error('Export request failed');
+						const blob = await res.blob();
+						const url = URL.createObjectURL(blob);
+						const link = document.createElement('a');
+						link.href = url;
+						link.download = 'ilo-fans-controller-config.json';
+						link.click();
+						setTimeout(() => URL.revokeObjectURL(url), 1000);
+						this.status = 'Settings exported';
+					} catch (e) {
+						console.error('Failed to export configuration:', e);
+						this.status = 'Could not export settings';
+					}
+				},
+
+				async importBundle(event) {
+					const file = event.target.files?.[0];
+					if (!file) return;
+					try {
+						const bundle = JSON.parse(await file.text());
+						if (this.savePromise) await this.savePromise;
+						if (!confirm('Importing will replace the active profile, auto/manual state, all fan curves and assignments, and all fan presets. Continue?')) return;
 						const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
 							method: 'POST',
-							body: JSON.stringify({ action: 'autocontrol', config: this.config }),
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ action: 'importConfig', bundle }),
 						});
-						if (res.ok) {
-							this.config = await res.json();
-						}
+						const result = await res.json();
+						if (!res.ok) throw new Error(result.error || 'Import failed');
+						this.config = result.autoControl;
+						const presets = Alpine.store('presets');
+						presets.presets = result.presets;
+						presets.currentPreset = null;
+						presets.detectPreset();
+						this.status = 'Settings imported';
 					} catch (e) {
-						console.error('Failed to save auto-control config:', e);
+						console.error('Failed to import configuration:', e);
+						this.status = e.message || 'Could not import settings';
+					} finally {
+						event.target.value = '';
 					}
 				},
 

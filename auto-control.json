@@ -1,6 +1,9 @@
 {
     "enabled": true,
     "profile": "normal",
+    "hysteresis": 3,
+    "ambientSafetyTemp": 40,
+    "preferUnraidStorage": true,
     "fanZones": {
         "storage": [0],
         "cpu": [1, 2],

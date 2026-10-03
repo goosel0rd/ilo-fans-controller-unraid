@@ -268,8 +268,9 @@ while (true) {
     $diskTemps = get_unraid_disk_temperatures();
 
     // Safety: Force Normal profile if ambient > 40°C
-    if ($ambientTemp !== null && $ambientTemp > 40 && $profileName === 'silence') {
-        echo "[" . date('H:i:s') . "] SAFETY: Ambient {$ambientTemp}°C > 40°C, forcing Normal profile\n";
+    $ambientSafetyTemp = $config['ambientSafetyTemp'] ?? 40;
+    if ($ambientTemp !== null && $ambientTemp > $ambientSafetyTemp && $profileName === 'silence') {
+        echo "[" . date('H:i:s') . "] SAFETY: Ambient {$ambientTemp}°C > {$ambientSafetyTemp}°C, forcing Normal profile\n";
         $profile = $config['profiles']['normal'];
         $profileName = 'normal (forced)';
     } else {
@@ -280,7 +281,10 @@ while (true) {
 
     // Unraid reports actual drive temperatures; prefer those over iLO's storage-zone sensor.
     if (!empty($diskTemps)) {
-        $zoneTemps['storage'] = array_map('floatval', array_values($diskTemps));
+        $diskReadings = array_map('floatval', array_values($diskTemps));
+        $zoneTemps['storage'] = !empty($config['preferUnraidStorage'])
+            ? $diskReadings
+            : array_merge($zoneTemps['storage'] ?? [], $diskReadings);
     }
     $maxCpu  = !empty($zoneTemps['cpu']) ? max($zoneTemps['cpu']) : 0;
 
@@ -321,7 +325,7 @@ while (true) {
     echo "  Calculated fan speeds: " . implode(', ', $fanSpeeds) . "%\n";
 
     $speedDiff = $lastSpeed === null ? 100 : max(array_map(fn($s, $i) => abs($s - ($lastSpeed[$i] ?? 0)), $fanSpeeds, array_keys($fanSpeeds)));
-    if ($lastSpeed === null || $speedDiff > 3) {
+    if ($lastSpeed === null || $speedDiff > ($config['hysteresis'] ?? 3)) {
         echo "  Applying fan speeds (largest diff: {$speedDiff}%)...\n";
         if (set_fan_speeds($fanSpeeds, $fanCount)) {
             echo "  [OK] Fan speeds set to: " . implode(', ', $fanSpeeds) . "%\n";
